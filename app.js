@@ -2,7 +2,7 @@
  * 本轮先做 local-first：数据保存在浏览器本地，并通过 BroadcastChannel / storage 事件同步同源设备标签页。
  * 跨设备云端同步需要下一阶段接入后端账户与数据库。
  */
-const APP_VERSION = '2026-09-22-round-18';
+const APP_VERSION = '2026-09-22-round-19';
 const STORAGE_KEY = 'luxing-workbench-state-v2';
 const DAY_NAMES = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 const today = new Date();
@@ -131,7 +131,8 @@ function defaultState() {
     // 同步元数据：为跨设备同步做准备。
     // clock 记录「集合:id」或字段名最后一次被修改的时间；tombstones 记录删除动作，
     // 有了删除墓碑，别的设备才不会把已经删掉的记录又同步回来。
-    sync: { device: '', rev: 0, updatedAt: '', clock: {}, tombstones: {} },
+    // code 是「同步码」：两端填同一串码就同步同一份数据，不需要登录。
+    sync: { device: '', rev: 0, updatedAt: '', clock: {}, tombstones: {}, code: '', lastSyncedAt: '', lastError: '' },
     lastSavedAt: null,
   };
 }
@@ -184,6 +185,9 @@ function mergeState(saved) {
     updatedAt: typeof savedSync.updatedAt === 'string' ? savedSync.updatedAt : '',
     clock: savedSync.clock && typeof savedSync.clock === 'object' ? { ...savedSync.clock } : {},
     tombstones: savedSync.tombstones && typeof savedSync.tombstones === 'object' ? { ...savedSync.tombstones } : {},
+    code: typeof savedSync.code === 'string' ? savedSync.code : '',
+    lastSyncedAt: typeof savedSync.lastSyncedAt === 'string' ? savedSync.lastSyncedAt : '',
+    lastError: typeof savedSync.lastError === 'string' ? savedSync.lastError : '',
   };
   merged.quotes = merged.quotes.map(quote => ({ ...quote, id: quote.id ?? makeId('quote'), text: quote.text || '', author: quote.author || '佚名', category: quote.category === '电影语录' ? '电影语录' : '中外名人' })).filter(quote => quote.text);
   if (!merged.quotes.length) merged.quotes = base.quotes;
@@ -448,6 +452,235 @@ function persist(broadcast = true) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(dataSnapshot())); } catch (error) { /* 无痕模式下静默降级 */ }
   if (broadcast && channel) channel.postMessage({ type: 'state', state: dataSnapshot() });
   updateSyncStatus();
+  scheduleSync();
+}
+
+/* ---------- 跨设备同步（Supabase）----------
+ * 设计：不用账号登录，用「同步码」。一端生成一串随机码，另一端填同一串码，
+ * 两端就读写云端同一行数据；合并规则用 round-18 建好的 clock / tombstones，
+ * 逐 key 比时间戳，谁新谁生效，删除墓碑优先，避免两端互相覆盖丢数据。
+ *
+ * 密钥说明：这里用的是 Supabase 的 publishable key，它本来就是设计成可以公开的
+ * （客户端代码里必然会带着它）。真正的门槛是同步码本身：
+ * 数据表开了行级安全且没有任何策略，拿着这个公开密钥也读不到整张表，
+ * 只能通过带同步码的 luxing_pull / luxing_push 两个函数访问。
+ */
+const SYNC_BACKEND = {
+  url: 'https://hkijeeijvcuaqrzgohhp.supabase.co',
+  key: 'sb_publishable_2DTma1LWCn_GXwVVdig6ow_02aSRxcx',
+};
+let syncInFlight = false;
+let syncDebounceTimer = null;
+let syncPaused = false;      // 同步自身写盘时置位，避免自己触发自己
+let syncState = 'idle';      // idle | syncing | ok | error | offline | off
+
+function syncReady() { return Boolean(state.sync && state.sync.code); }
+
+function makeSyncCode() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function syncRpc(fn, body) {
+  const response = await fetch(`${SYNC_BACKEND.url}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: {
+      apikey: SYNC_BACKEND.key,
+      Authorization: `Bearer ${SYNC_BACKEND.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}${detail ? ' · ' + detail.slice(0, 140) : ''}`);
+  }
+  return response.json();
+}
+
+function maxStamp(a, b) {
+  if (!a) return b || '';
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
+function splitSyncKey(key) {
+  const index = key.indexOf(':');
+  return index < 0 ? { field: key, id: null } : { field: key.slice(0, index), id: key.slice(index + 1) };
+}
+
+function writeState() {
+  state.lastSavedAt = new Date().toISOString();
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(dataSnapshot())); } catch (error) { /* 忽略 */ }
+  updateSyncStatus();
+}
+
+// 按 sync key（`集合:id` / `字段:键` / `字段`）读写合并目标
+function writeByKey(target, key, value) {
+  const { field, id } = splitSyncKey(key);
+  if (id === null) { target[field] = cloneJson(value); return; }
+  if (SYNC_RECORD_COLLECTIONS.includes(field)) {
+    if (!Array.isArray(target[field])) target[field] = [];
+    const index = target[field].findIndex(record => record.id === id);
+    if (index >= 0) target[field][index] = cloneJson(value);
+    else target[field].push(cloneJson(value));
+    return;
+  }
+  if (!target[field] || typeof target[field] !== 'object') target[field] = {};
+  target[field][id] = cloneJson(value);
+}
+
+function deleteByKey(target, key) {
+  const { field, id } = splitSyncKey(key);
+  if (id === null) return;
+  if (SYNC_RECORD_COLLECTIONS.includes(field)) {
+    target[field] = (target[field] || []).filter(record => record.id !== id);
+    return;
+  }
+  if (target[field] && typeof target[field] === 'object') delete target[field][id];
+}
+
+// 把远端状态合并进本地。返回「远端胜出的 key 数」，0 表示本地已是最新。
+function mergeRemoteState(remoteState) {
+  const remote = remoteState && typeof remoteState === 'object' ? remoteState : {};
+  const meta = state.sync;
+  const localClock = meta.clock || {};
+  const localTomb = meta.tombstones || {};
+  const remoteClock = (remote.sync && remote.sync.clock) || {};
+  const remoteTomb = (remote.sync && remote.sync.tombstones) || {};
+  let remoteWins = 0;
+
+  // ① 逐个 key 比时间戳：远端更新就用远端（含「远端删了」的情况）
+  const allKeys = new Set([...Object.keys(localClock), ...Object.keys(remoteClock), ...Object.keys(localTomb), ...Object.keys(remoteTomb)]);
+  allKeys.forEach(key => {
+    const localStamp = maxStamp(localClock[key], localTomb[key]);
+    const remoteStamp = maxStamp(remoteClock[key], remoteTomb[key]);
+    if (!remoteStamp || remoteStamp <= localStamp) return;
+    remoteWins += 1;
+    const remoteDeleted = Boolean(remoteTomb[key]) && (!remoteClock[key] || remoteTomb[key] > remoteClock[key]);
+    if (remoteDeleted) {
+      deleteByKey(state, key);
+      localTomb[key] = remoteTomb[key];
+      delete localClock[key];
+      return;
+    }
+    const { field, id } = splitSyncKey(key);
+    const value = id === null
+      ? remote[field]
+      : SYNC_RECORD_COLLECTIONS.includes(field)
+        ? (remote[field] || []).find(record => record.id === id)
+        : (remote[field] || {})[id];
+    if (value === undefined) return;
+    writeByKey(state, key, value);
+    localClock[key] = remoteClock[key] || remoteStamp;
+    delete localTomb[key];
+  });
+
+  // ② 补齐本地没有的记录（远端有、本地没删过）
+  SYNC_RECORD_COLLECTIONS.forEach(collection => {
+    const localIds = new Set((state[collection] || []).map(record => record.id));
+    (remote[collection] || []).forEach(record => {
+      if (localIds.has(record.id)) return;
+      const key = `${collection}:${record.id}`;
+      if (localTomb[key] && (!remoteClock[key] || localTomb[key] > remoteClock[key])) return;
+      if (!Array.isArray(state[collection])) state[collection] = [];
+      state[collection].push(cloneJson(record));
+      localClock[key] = remoteClock[key] || localClock[key] || new Date().toISOString();
+      remoteWins += 1;
+    });
+  });
+
+  // ③ 补齐键值映射（日记 / 学习笔记）
+  SYNC_MAP_FIELDS.forEach(field => {
+    const remoteMap = (remote[field] && typeof remote[field] === 'object') ? remote[field] : {};
+    if (!state[field] || typeof state[field] !== 'object') state[field] = {};
+    Object.keys(remoteMap).forEach(id => {
+      const key = `${field}:${id}`;
+      if (JSON.stringify(state[field][id] ?? null) === JSON.stringify(remoteMap[id] ?? null)) return;
+      if (localTomb[key] && (!remoteClock[key] || localTomb[key] > remoteClock[key])) return;
+      if (!remoteClock[key] || remoteClock[key] <= maxStamp(localClock[key], localTomb[key])) return;
+      state[field][id] = cloneJson(remoteMap[id]);
+      localClock[key] = remoteClock[key];
+      remoteWins += 1;
+    });
+  });
+
+  // ④ 同步元数据取并集，保证下次合并两端判断一致
+  Object.keys(remoteClock).forEach(key => { localClock[key] = maxStamp(localClock[key], remoteClock[key]); });
+  Object.keys(remoteTomb).forEach(key => { localTomb[key] = maxStamp(localTomb[key], remoteTomb[key]); });
+
+  return remoteWins;
+}
+
+function formatSyncTime(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const time = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+}
+
+function syncStatusLabel() {
+  if (!syncReady()) return '未开启';
+  if (syncState === 'syncing') return '正在同步…';
+  if (syncState === 'offline') return '离线，联网后自动同步';
+  if (syncState === 'error') return `同步出错：${(state.sync && state.sync.lastError) || '未知原因'}`;
+  const at = state.sync && state.sync.lastSyncedAt;
+  if (!at) return '尚未同步';
+  return `已同步 · ${formatSyncTime(at)}`;
+}
+
+function setSyncState(next) {
+  syncState = next;
+  document.querySelectorAll('[data-sync-status]').forEach(node => { node.textContent = syncStatusLabel(); });
+  document.querySelectorAll('.account-sync-status').forEach(node => { node.dataset.syncMode = next; });
+}
+
+function scheduleSync(delay = 2500) {
+  if (syncPaused || !syncReady()) return;
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => runSync(), delay);
+}
+
+async function runSync() {
+  if (!syncReady() || syncInFlight) return;
+  if (!navigator.onLine) { setSyncState('offline'); return; }
+  syncInFlight = true;
+  setSyncState('syncing');
+  try {
+    const rows = await syncRpc('luxing_pull', { p_code: state.sync.code });
+    const remoteRow = Array.isArray(rows) ? rows[0] : rows;
+    syncPaused = true;
+    if (remoteRow && remoteRow.data) {
+      const changed = mergeRemoteState(remoteRow.data);
+      const remotePlain = cloneJson(remoteRow.data);
+      delete remotePlain.sync;
+      delete remotePlain.lastSavedAt;
+      const needsPush = changed > 0 || JSON.stringify(trackableSnapshot()) !== JSON.stringify(remotePlain);
+      if (needsPush) await syncRpc('luxing_push', { p_code: state.sync.code, p_data: dataSnapshot() });
+    } else {
+      // 云端还没有这个同步码的数据：把本地整份推上去
+      await syncRpc('luxing_push', { p_code: state.sync.code, p_data: dataSnapshot() });
+    }
+    state.sync.lastSyncedAt = new Date().toISOString();
+    state.sync.lastError = '';
+    lastTrackedSnapshot = trackableSnapshot();
+    writeState();
+    setSyncState('ok');
+    // 合并可能带来了新数据。正在输入时不重绘，避免打断输入。
+    const active = document.activeElement;
+    const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+    if (!typing) render();
+  } catch (error) {
+    state.sync.lastError = String((error && error.message) || error);
+    writeState();
+    setSyncState('error');
+  } finally {
+    syncPaused = false;
+    syncInFlight = false;
+  }
 }
 
 function applyRemoteState(remote) {
@@ -655,6 +888,36 @@ function handleAvatarFile(file) {
   reader.readAsDataURL(file);
 }
 
+function syncCardTemplate() {
+  if (!syncReady()) {
+    return `
+      <p>在手机和电脑上填同一串「同步码」，两端的数据就会自动合并同步。同步码只存在你自己的设备里。</p>
+      <div class="settings-actions">
+        <button class="button primary full-button" data-action="sync-generate">生成同步码（用这台设备）</button>
+      </div>
+      <label class="account-field account-sync-join"><span>或者：填入另一台设备的同步码</span><input id="sync-code-input" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴另一台设备生成的同步码" /></label>
+      <div class="settings-actions">
+        <button class="button ghost full-button" data-action="sync-join">使用这个同步码</button>
+      </div>
+      <div class="account-note">云端保存的是加密传输的数据副本，只有拿着这串同步码的设备才能读写它。</div>`;
+  }
+  return `
+    <div class="account-sync-status" data-sync-mode="${syncState}"><span class="status-dot"></span><span data-sync-status>${escapeHtml(syncStatusLabel())}</span></div>
+    <label class="account-field"><span>同步码（两台设备填一样的）</span>
+      <div class="account-sync-code">
+        <input id="sync-code-value" class="text-input" type="text" readonly value="${escapeHtml(state.sync.code)}" />
+        <button type="button" class="button ghost" data-action="sync-copy">复制</button>
+      </div>
+    </label>
+    <div class="settings-actions">
+      <button class="button primary full-button" data-action="sync-now">立即同步</button>
+    </div>
+    <div class="account-danger-zone">
+      <button class="button ghost full-button danger-outline" data-action="sync-disable">关闭同步</button>
+    </div>
+    <div class="account-note">关闭同步只是停止同步，不会删除本机或云端已经有的数据。</div>`;
+}
+
 function renderAccount() {
   const account = state.account || {};
   const nickname = accountNickname();
@@ -689,8 +952,12 @@ function renderAccount() {
           <div class="card-subtitle">从 ${escapeHtml(formatCalendarDate(state.firstUseDate))} 开始记录</div>
         </section>
         <section class="card side-card account-side-card">
+          <h3>跨设备同步</h3>
+          ${syncCardTemplate()}
+        </section>
+        <section class="card side-card account-side-card">
           <h3>数据与账户</h3>
-          <p>账户信息只保存在这台设备上。多用户系统接入后端后，才会开启跨设备同步。</p>
+          <p>数据也可以手动导出成 JSON 文件备份或搬到别的设备。</p>
           <div class="settings-actions">
             <button class="button primary full-button" data-action="export">导出我的数据</button>
             <button class="button ghost full-button" data-action="import">导入数据</button>
@@ -1646,6 +1913,54 @@ function handleClick(event) {
   if (action === 'inbox') { state.page = 'inbox'; render(); return; }
   if (action === 'settings') { state.page = 'settings'; render(); return; }
   if (action === 'account') { state.page = 'account'; render(); return; }
+  if (action === 'sync-generate') {
+    state.sync.code = makeSyncCode();
+    persist(false);
+    showToast('同步码已生成，正在把本机数据推送到云端…');
+    render();
+    runSync();
+    return;
+  }
+  if (action === 'sync-join') {
+    const input = document.querySelector('#sync-code-input');
+    const value = (input ? input.value : '').trim();
+    if (value.length < 24) { showToast('同步码看起来不对，请确认复制完整'); return; }
+    state.sync.code = value;
+    persist(false);
+    showToast('已连接，正在合并两端数据…');
+    render();
+    runSync();
+    return;
+  }
+  if (action === 'sync-copy') {
+    const value = state.sync.code || '';
+    const done = () => showToast('同步码已复制，去另一台设备粘贴');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(done).catch(() => {
+        const input = document.querySelector('#sync-code-value');
+        if (input) { input.select(); document.execCommand && document.execCommand('copy'); }
+        showToast('已选中同步码，请手动复制');
+      });
+    } else {
+      const input = document.querySelector('#sync-code-value');
+      if (input) input.select();
+      showToast('已选中同步码，请手动复制');
+    }
+    return;
+  }
+  if (action === 'sync-now') { showToast('正在同步…'); runSync(); return; }
+  if (action === 'sync-disable') {
+    showConfirm('关闭同步？', '只是停止同步，本机和云端已有的数据都不会被删除。再次填入同一串同步码就能恢复。', () => {
+      state.sync.code = '';
+      state.sync.lastSyncedAt = '';
+      state.sync.lastError = '';
+      syncState = 'idle';
+      persist(false);
+      render();
+      showToast('已关闭同步');
+    }, true);
+    return;
+  }
   if (action === 'pick-avatar') { pickAvatar(); return; }
   if (action === 'sign-out') { showConfirm('退出登录？', '当前还没有接入账号后端，所以这里不会清除本机数据。接入后点击会回到登录页。', () => { showToast('账号系统接入后即可正式退出登录'); }, false); return; }
   if (action === 'select-inbox') { state.inboxSelecting = true; state.selectedInboxIds = []; render(); return; }
@@ -1734,4 +2049,18 @@ document.querySelector('.notification-button')?.addEventListener('click', () => 
 render();
 checkDueReminders();
 window.setInterval(checkDueReminders, 30000);
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?build=20260922-round-18').catch(() => {}));
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?build=20260922-round-19').catch(() => {}));
+
+/* ---------- 同步触发时机 ----------
+ * 1) 启动后延迟同步一次（不阻塞首屏渲染）
+ * 2) 回到前台 / 标签页重新可见时同步（手机从后台切回来最常见的场景）
+ * 3) 网络恢复时同步
+ * 4) 每次数据变更后由 persist() 防抖触发（见 scheduleSync）
+ */
+if (syncReady()) {
+  window.setTimeout(() => runSync(), 1500);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') runSync(); });
+window.addEventListener('focus', () => runSync());
+window.addEventListener('online', () => runSync());
+window.addEventListener('offline', () => setSyncState('offline'));

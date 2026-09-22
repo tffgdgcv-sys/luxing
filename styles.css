@@ -2712,3 +2712,17 @@ button.profile-card.sidebar-account:hover { background: var(--surface-hover); }
   .account-identity-card { padding: 18px 16px; }
   .account-usage-value strong { font-size: 40px; }
 }
+
+/* ---------- 6. 跨设备同步卡片 ---------- */
+.account-sync-status { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.account-sync-status .status-dot { margin-top: 5px; flex: 0 0 7px; }
+.account-sync-status[data-sync-mode="ok"] { color: var(--primary-dark); }
+.account-sync-status[data-sync-mode="ok"] .status-dot { background: var(--green); }
+.account-sync-status[data-sync-mode="syncing"] { color: var(--amber); }
+.account-sync-status[data-sync-mode="error"] { color: var(--coral); }
+.account-sync-status[data-sync-mode="error"] .status-dot { background: var(--coral); box-shadow: 0 0 0 4px var(--coral-soft); }
+.account-sync-status[data-sync-mode="offline"] { color: var(--amber); }
+.account-sync-code { display: flex; align-items: center; gap: 7px; }
+.account-sync-code .text-input { flex: 1; min-width: 0; font-size: 11px; letter-spacing: .01em; }
+.account-sync-code .button { flex: 0 0 auto; }
+.account-sync-join { margin-top: 15px; }

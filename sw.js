@@ -1,4 +1,4 @@
-const CACHE_NAME = 'luxing-ui-v36';
+const CACHE_NAME = 'luxing-ui-v37';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './fonts/gelasio-numerals.woff2', './fonts/latin-serif-400.woff2', './fonts/latin-serif-700.woff2', './fonts/serif-sc-200.woff2', './fonts/serif-sc-300.woff2', './fonts/serif-sc-600.woff2'];
 const NETWORK_FIRST = /\.(?:html|css|js|webmanifest)$|sw\.js/;
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
