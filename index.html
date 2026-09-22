@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F7F1E5" />
+    <meta name="description" content="个人工作台 UI 原型" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='28' fill='%237A8B64'/%3E%3Cpath d='M30 51h40M50 31v40' stroke='white' stroke-width='10' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <title>律行 · 个人工作台</title>
+    <link rel="stylesheet" href="styles.css?build=20260922-round-18" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand-lockup">
+          <div>
+            <div class="brand-name">律行</div>
+            <div class="brand-subtitle">PERSONAL OS</div>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item active" data-page="today">
+            <span class="nav-icon">◷</span><span>当下</span><span class="nav-count today-count">0</span>
+          </button>
+          <button class="nav-item" data-page="plan">
+            <span class="nav-icon">☷</span><span>生活</span><span class="nav-count life-count">0</span>
+          </button>
+          <button class="nav-item" data-page="work">
+            <span class="nav-icon">▣</span><span>工作</span><span class="nav-count work-count">0</span>
+          </button>
+          <button class="nav-item" data-page="inbox">
+            <span class="nav-icon">⌁</span><span>收集</span><span class="nav-count inbox-count">3</span>
+          </button>
+          <button class="nav-item" data-page="fitness">
+            <span class="nav-icon fitness-nav-icon" aria-hidden="true"></span><span>健身</span>
+          </button>
+          <button class="nav-item" data-page="learn">
+            <span class="nav-icon">▤</span><span>学习</span>
+          </button>
+        </nav>
+
+        <nav class="nav-list">
+          <button class="nav-item" data-page="journal">
+            <span class="nav-icon">✎</span><span>日记</span>
+          </button>
+          <button class="nav-item" data-page="settings">
+            <span class="nav-icon">⚙</span><span>设置</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="sync-status"><span class="status-dot"></span><span>当前设备已保存</span><span class="sync-time">刚刚</span></div>
+          <button type="button" class="profile-card sidebar-account" data-action="account" aria-label="打开账户">
+            <span class="avatar" data-avatar-slot>林</span>
+            <span class="profile-meta"><strong data-nickname-slot>林</strong><span>查看账户</span></span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="main-content">
+
+
+        <div class="page-container" id="page-container"></div>
+      </main>
+    </div>
+
+    <nav class="mobile-nav" aria-label="移动端导航">
+      <button class="mobile-nav-item" data-page="work"><span>▣</span><small>工作</small></button>
+      <button class="mobile-nav-item" data-page="learn"><span>▤</span><small>学习</small></button>
+      <button class="mobile-nav-item mobile-nav-center" data-page="today"><span>◷</span><small>当下</small></button>
+      <button class="mobile-nav-item" data-page="fitness"><span class="fitness-nav-icon" aria-hidden="true"></span><small>健身</small></button>
+      <button class="mobile-nav-item" data-page="plan"><span>☷</span><small>生活</small></button>
+    </nav>
+
+    <div class="toast" id="toast" role="status"></div>
+
+    <div class="modal-backdrop" id="confirm-modal" aria-hidden="true">
+      <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div class="modal-header"><div><div class="eyebrow">ARE YOU SURE?</div><h2 id="confirm-title">确认操作</h2></div><button class="icon-button" data-close-confirm>×</button></div>
+        <p class="confirm-message" id="confirm-message">确认继续吗？</p>
+        <div class="modal-footer"><button type="button" class="button ghost" data-close-confirm>取消</button><button type="button" class="button primary danger-button" id="confirm-action">确认</button></div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="quick-add-modal" aria-hidden="true">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="quick-add-title">
+        <div class="modal-header"><div><div class="eyebrow">QUICK CAPTURE</div><h2 id="quick-add-title">快速新增</h2></div><button class="icon-button" data-close-modal>×</button></div>
+        <div class="quick-type-grid">
+          <button class="quick-type selected" data-type="task"><span class="quick-type-icon indigo">✓</span><strong>待办事项</strong><small>安排一件要完成的事</small></button>
+          <button class="quick-type" data-type="inbox"><span class="quick-type-icon amber">⌁</span><strong>收集想法</strong><small>先记下来，稍后整理</small></button>
+          <button class="quick-type" data-type="reminder"><span class="quick-type-icon coral">◷</span><strong>设置提醒</strong><small>在特定时间提醒我</small></button>
+          <button class="quick-type" data-type="learning"><span class="quick-type-icon violet">▤</span><strong>学习内容</strong><small>加入今日学习计划</small></button>
+          <button class="quick-type" data-type="workout"><span class="quick-type-icon green">⌁</span><strong>训练动作</strong><small>添加一个健身动作</small></button>
+        </div>
+        <form id="quick-add-form">
+          <label class="field-label" for="quick-add-input">内容</label>
+          <input id="quick-add-input" class="text-input large" required autocomplete="off" placeholder="例如：整理首页参考网站" />
+          <div class="form-row">
+            <label class="mini-field"><span id="quick-add-date-label">安排日期</span><input id="quick-add-date" type="date" /></label>
+            <label class="mini-field" id="quick-add-time-field"><span>时间</span><input id="quick-add-time" type="time" /></label>
+            <label class="mini-field" id="quick-add-duration-field" hidden><span>预计分钟</span><input id="quick-add-duration" type="number" min="5" step="5" placeholder="30" /></label>
+            <label class="mini-field" id="quick-add-priority-field"><span>优先级</span><select id="quick-add-priority"><option value="medium">中</option><option value="high">高</option><option value="low">低</option></select></label>
+          </div>
+          <div class="modal-footer"><button type="button" class="button ghost" data-close-modal>取消</button><button type="submit" class="button primary">保存</button></div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="life-reminder-modal" aria-hidden="true">
+      <div class="modal life-reminder-modal" role="dialog" aria-modal="true" aria-labelledby="life-reminder-modal-title">
+        <div class="modal-header"><div><div class="eyebrow">LIFE REMINDER</div><h2 id="life-reminder-modal-title">新增生活提醒</h2></div><button class="icon-button" data-close-life-reminder>×</button></div>
+        <form id="life-reminder-form">
+          <input type="hidden" id="life-reminder-edit-id" value="" />
+          <input type="hidden" id="life-reminder-mode" value="once" />
+          <label class="field-label" for="life-reminder-title">项目内容</label>
+          <input id="life-reminder-title" class="text-input large" required autocomplete="off" placeholder="例如：给家里买生活用品" />
+          <div class="field-label">提醒类型</div>
+          <div class="segmented-choice life-reminder-mode-choice" role="radiogroup" aria-label="提醒类型"><button type="button" class="segmented-choice-item active" data-life-reminder-mode="once">单日提醒</button><button type="button" class="segmented-choice-item" data-life-reminder-mode="monthly">固定提醒</button></div>
+          <div class="life-reminder-form-grid">
+            <label class="mini-field" id="life-reminder-date-field"><span>待完成日期</span><input id="life-reminder-date" type="date" required /></label>
+            <div class="mini-field" id="life-reminder-days-field" hidden><span>每月固定日期（可多选）</span><div id="life-reminder-day-grid" class="calendar-field"></div></div>
+            <label class="mini-field"><span>完成等级</span><div class="priority-choice-group" role="radiogroup" aria-label="完成等级"><label class="priority-choice priority-low"><input type="radio" name="life-reminder-priority" value="low"><span>低</span></label><label class="priority-choice priority-medium"><input type="radio" name="life-reminder-priority" value="medium" checked><span>中</span></label><label class="priority-choice priority-high"><input type="radio" name="life-reminder-priority" value="high"><span>高</span></label></div></label>
+          </div>
+          <div class="field-label">提醒时间（可多选）</div>
+          <div class="life-time-picker"><div class="life-time-entry"><input id="life-reminder-time-input" type="time" /><button type="button" class="button ghost" data-life-time-add>添加时间</button></div><div id="life-reminder-time-tags" class="time-picker-tags"></div></div>
+          <div class="modal-footer"><button type="button" class="button ghost" data-close-life-reminder>取消</button><button type="submit" class="button primary">保存提醒</button></div>
+        </form>
+      </div>
+    </div>
+
+        <div class="modal-backdrop" id="quote-modal" aria-hidden="true">
+      <div class="modal quote-modal" role="dialog" aria-modal="true" aria-labelledby="quote-modal-title">
+        <div class="modal-header"><div><div class="eyebrow">QUOTE LIBRARY</div><h2 id="quote-modal-title">名言语录库</h2></div><button class="icon-button" data-close-quote>×</button></div>
+        <div class="quote-mode-panel">
+          <div><strong>今日播放方式</strong><p>随机会在每天首次打开时选定一条，固定则始终展示你指定的语录。</p></div>
+          <div class="quote-mode-options"><label><input type="radio" name="quote-mode" value="random" data-quote-mode /> 每日随机</label><label><input type="radio" name="quote-mode" value="fixed" data-quote-mode /> 固定语录</label></div>
+          <select class="compact-select quote-fixed-select" data-fixed-quote aria-label="选择固定语录"></select>
+        </div>
+        <form id="quote-form" class="quote-form">
+          <div class="quote-form-heading"><strong>添加一条语录</strong><span>支持中外名人和电影语录</span></div>
+          <textarea id="quote-text" class="text-input quote-textarea" required placeholder="写下你想每天看到的一句话……"></textarea>
+          <div class="form-row quote-form-row"><label class="mini-field"><span>作者 / 角色</span><input id="quote-author" class="text-input" required placeholder="例如：鲁迅 / 尤达" /></label><label class="mini-field"><span>分类</span><select id="quote-category" class="compact-select"><option value="中外名人">中外名人</option><option value="电影语录">电影语录</option></select></label><button type="submit" class="button primary quote-save-button">添加语录</button></div>
+        </form>
+        <div class="quote-library-list" id="quote-library-list"></div>
+      </div>
+    </div>
+
+    <script src="app.js?build=20260922-round-18"></script>
+  </body>
+</html>
