@@ -2726,3 +2726,41 @@ button.profile-card.sidebar-account:hover { background: var(--surface-hover); }
 .account-sync-code .text-input { flex: 1; min-width: 0; font-size: 11px; letter-spacing: .01em; }
 .account-sync-code .button { flex: 0 0 auto; }
 .account-sync-join { margin-top: 15px; }
+
+/* ---------- 7. 当下页「待办事项」卡片：生活 / 工作 两组 ---------- */
+.today-summary-preview .today-todo-group { margin-bottom: 9px; }
+.today-summary-preview .today-todo-group + .today-todo-group,
+.today-summary-preview .today-todo-more + .today-todo-group { margin-top: 16px; }
+.today-summary-preview .today-todo-group:not(:first-child) { margin-top: 16px; }
+/* 覆盖「空状态统一 112px 高」的规则：这里两组并排，空提示要紧凑 */
+.today-summary-preview .today-todo-empty {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  padding: 9px 0 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.today-summary-preview .today-todo-more {
+  margin-top: 7px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+/* 单行：优先级标记 + 标题（最多两行）+ 时间 */
+.compact-record.today-todo-row > span:last-child { display: block; overflow: visible; -webkit-line-clamp: none; }
+.today-todo-row .today-todo-title {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.today-todo-row .today-todo-time {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--text-muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.coral-count { color: var(--coral); background: var(--coral-soft); }

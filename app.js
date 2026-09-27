@@ -2,7 +2,7 @@
  * 本轮先做 local-first：数据保存在浏览器本地，并通过 BroadcastChannel / storage 事件同步同源设备标签页。
  * 跨设备云端同步需要下一阶段接入后端账户与数据库。
  */
-const APP_VERSION = '2026-09-22-round-19';
+const APP_VERSION = '2026-09-22-round-20';
 const STORAGE_KEY = 'luxing-workbench-state-v2';
 const DAY_NAMES = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 const today = new Date();
@@ -974,9 +974,11 @@ function renderAccount() {
 
 function renderToday() {
   const todayTasks = state.tasks.filter(task => isToday(task.date));
-  const completedTasks = todayTasks.filter(task => task.done);
-  const pendingTasks = todayTasks.filter(task => !task.done);
-  const mustTasks = pendingTasks.filter(task => task.priority === 'high');
+  // 待办事项卡片：绑定「生活页」和「工作页」的今日待办
+  const lifeTodo = todayLifeItems();
+  const workTodo = todayWorkItems();
+  const todayTodoTotal = lifeTodo.length + workTodo.length;
+  const todayTodoMust = [...lifeTodo, ...workTodo].filter(item => item.priority === 'high').length;
   const pendingInbox = state.inbox.filter(item => item.status === 'pending');
   const dueLearningItems = learningDueItems();
   const learningDone = dueLearningItems.filter(item => item.doneDates.includes(isoToday)).length;
@@ -997,7 +999,7 @@ function renderToday() {
     <div class="today-dashboard-layout">
       <section class="card timeline-card"><div class="card-header"><div class="card-title-wrap"><span class="card-title">今日时间线</span><span class="card-subtitle">${todayEventCount} 个安排</span></div><div class="timeline-actions"><button class="card-link timeline-reminder-button" data-action="cycle-timeline-reminder">${timelineReminderLabel()}</button><button class="card-link" data-action="plan">查看生活</button></div></div><div class="timeline">${timelineTemplate()}</div></section>
       <aside class="today-side-stack">
-        <article class="card today-summary-card coral-card"><div class="today-summary-main"><div class="card-title">待办事项</div><div class="summary-value">${pendingTasks.length}</div><div class="card-subtitle">${mustTasks.length ? `${mustTasks.length} 项需要优先完成` : '今天没有高优先级任务'}</div></div><div class="today-summary-preview"><div class="sub-card-header"><span>今日必须完成</span><span class="sub-card-count coral-count">${mustTasks.length}</span></div>${mustTasks.slice(0, 3).map(task => compactTask(task, false, true)).join('') || compactEmpty('暂时没有必须完成的事')}<div class="sub-section-label secondary">其他待办</div>${pendingTasks.filter(task => task.priority !== 'high').slice(0, 3).map(task => compactTask(task)).join('') || compactEmpty('暂无其他待办')}</div></article>
+        <article class="card today-summary-card coral-card"><div class="today-summary-main"><div class="card-title">待办事项</div><div class="summary-value">${todayTodoTotal}</div><div class="card-subtitle">生活 ${lifeTodo.length} · 工作 ${workTodo.length}${todayTodoMust ? ` · ${todayTodoMust} 项高优先级` : ''}</div></div><div class="today-summary-preview">${todayTodoGroup('生活', lifeTodo, '今天没有生活待办')}${todayTodoGroup('工作', workTodo, '今天没有工作待办')}</div></article>
         <article class="card today-summary-card amber-card"><div class="today-summary-main"><div class="card-title">收集箱</div><div class="summary-value">${pendingInbox.length}</div><div class="card-subtitle">等待稍后整理</div><button type="button" class="card-link mobile-inbox-link" data-action="inbox">查看</button></div><div class="today-summary-preview"><div class="sub-card-header"><span>待整理内容</span><span class="sub-card-count amber-count">${pendingInbox.length}</span></div>${pendingInbox.slice(0, 3).map(inboxPreviewTemplate).join('') || compactEmpty('收集箱很清爽')}</div></article>
         <section class="card equal-activity-card"><div class="card-header"><div class="card-title-wrap"><span class="card-title">今日学习</span><span class="section-badge">${learningDone}/${dueLearningItems.length}</span></div><button class="card-link" data-action="learn">查看</button></div><div class="activity-body"><span class="activity-pill violet">▤ ${learningTotalMinutes} 分钟目标</span><div class="activity-name">${dueLearningItems[0]?.title || '今天没有安排学习'}</div><div class="activity-desc">${learningDoneMinutes} / ${learningTotalMinutes} 分钟已完成</div><div class="activity-footer"><span class="activity-stat"><strong>${learningDoneMinutes}</strong> / ${learningTotalMinutes} 分钟</span><button class="button primary" data-action="start-learning">${learningDone === dueLearningItems.length && dueLearningItems.length ? '已完成' : '开始'}</button></div></div></section>
         <section class="card equal-activity-card"><div class="card-header"><div class="card-title-wrap"><span class="card-title">今日健身</span><span class="section-badge">${fitnessDone ? '已完成' : '待打卡'}</span></div><button class="card-link" data-action="fitness">查看</button></div><div class="activity-body"><span class="activity-pill green">⌁ ${dueFitnessPlans.length ? `${dueFitnessPlans.length} 个计划` : '今日无计划'}</span><div class="activity-name">${dueFitnessPlans[0]?.title || '添加今天的训练内容'}</div><div class="activity-desc">${dueFitnessPlans.map(plan => plan.title).join(' · ') || '添加今天的训练内容'}</div><div class="activity-footer"><span class="activity-stat"><strong>${fitnessDone ? '已' : '待'}</strong> 打卡</span><button class="button primary" data-action="check-fitness">${fitnessDone ? '已完成' : '打卡'}</button></div></div></section>
@@ -1062,6 +1064,42 @@ function compactTask(task, done = false, must = false) {
   return `<div class="compact-record ${done ? 'record-done' : ''}"><span class="compact-todo ${must ? 'must' : ''}">${done ? '✓' : must ? '!' : '○'}</span><span>${escapeHtml(task.title)}</span></div>`;
 }
 function compactEmpty(text) { return `<div class="compact-empty">${escapeHtml(text)}</div>`; }
+
+/* ---------- 当下页「待办事项」卡片的数据来源 ----------
+ * 「今日待办」= 今天到期且尚未完成，生活与工作用同一口径：
+ *   生活：生活任务（date 是今天）+ 生活提醒（单次提醒看日期，固定提醒看今天是否在提醒日）
+ *   工作：工作安排 / 工作计划（isWorkDueToday 已经同时覆盖单次与每月固定）
+ * 逾期未完成不算「今日待办」（它属于逾期，各页面单独有一块），与改动前的口径保持一致。
+ */
+function todayLifeItems() {
+  const tasks = state.tasks.map(task => ({ ...task, kind: 'task' }));
+  const reminders = state.reminders.map(reminder => ({ ...reminder, kind: 'reminder' }));
+  return [...tasks, ...reminders]
+    .filter(item => isLifeItemDueToday(item) && !lifeItemIsDone(item))
+    .sort(compareLifeItems);
+}
+
+function todayWorkItems() {
+  return state.workItems
+    .filter(item => isWorkDueToday(item) && !isWorkDoneOnDate(item))
+    .sort((a, b) => String(a.time || '99:99').localeCompare(String(b.time || '99:99'))
+      || String(a.title).localeCompare(String(b.title), 'zh-CN'));
+}
+
+function todayTodoTemplate(item) {
+  const time = item.kind === 'reminder' ? (reminderTimes(item)[0] || '') : (item.time || '');
+  const must = item.priority === 'high';
+  return `<div class="compact-record today-todo-row"><span class="compact-todo ${must ? 'must' : ''}">${must ? '!' : '○'}</span><span class="today-todo-title">${escapeHtml(item.title)}</span>${time ? `<span class="today-todo-time">${escapeHtml(time)}</span>` : ''}</div>`;
+}
+
+// 一组待办（生活 / 工作），最多列 3 条，其余用一行提示收口，避免卡片又变长
+function todayTodoGroup(label, items, emptyText) {
+  const rows = items.slice(0, 3).map(todayTodoTemplate).join('');
+  const rest = items.length - Math.min(items.length, 3);
+  return `<div class="sub-card-header today-todo-group"><span>${label}</span><span class="sub-card-count coral-count">${items.length}</span></div>`
+    + (items.length ? rows : `<div class="today-todo-empty">${escapeHtml(emptyText)}</div>`)
+    + (rest > 0 ? `<div class="today-todo-more">另有 ${rest} 项，去${label}页查看</div>` : '');
+}
 function inboxPreviewTemplate(item) { return `<div class="compact-record"><span class="compact-inbox">⌁</span><span>${escapeHtml(item.text)}</span></div>`; }
 
 function timelineTemplate() {
@@ -2049,7 +2087,7 @@ document.querySelector('.notification-button')?.addEventListener('click', () => 
 render();
 checkDueReminders();
 window.setInterval(checkDueReminders, 30000);
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?build=20260922-round-19').catch(() => {}));
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js?build=20260922-round-20').catch(() => {}));
 
 /* ---------- 同步触发时机 ----------
  * 1) 启动后延迟同步一次（不阻塞首屏渲染）
